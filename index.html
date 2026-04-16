@@ -126,6 +126,13 @@ function formatThaiDate(isoString) {
   return new Date(isoString).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+const CASE_PALETTE = [
+  '#e11d48', '#f97316', '#fbbf24', '#84cc16', '#22c55e', 
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#4f46e5',
+  '#ec4899', '#f43f5e', '#64748b', '#0f172a'
+];
+const getCaseColor = (id, index) => CASE_PALETTE[index % CASE_PALETTE.length];
+
 function MapComponent({ cases, temples }) {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
@@ -166,15 +173,17 @@ function MapComponent({ cases, temples }) {
       }).addTo(map);
     });
 
-    cases.forEach(c => {
-      let colorClass = c.statusClass === 'status-critical' ? '#e11d48' : 
-                       c.statusClass === 'status-warning' ? '#d97706' : '#2563eb';
+    // Sorting by date to ensure consistent indexing for colors
+    const coloredCases = [...cases].sort((a,b)=> new Date(a.symptomDate) - new Date(b.symptomDate));
+
+    coloredCases.forEach((c, idx) => {
+      let markerColor = getCaseColor(c.id, idx);
                        
       const caseIcon = L.divIcon({
         className: 'custom-marker',
         html: `
-          <div class="custom-marker-ping" style="background-color: ${colorClass}"></div>
-          <div class="custom-marker-dot" style="background-color: ${colorClass}"></div>
+          <div class="custom-marker-ping" style="background-color: ${markerColor}"></div>
+          <div class="custom-marker-dot" style="background-color: ${markerColor}"></div>
         `,
         iconSize: [24, 24],
         iconAnchor: [12, 12]
@@ -183,7 +192,7 @@ function MapComponent({ cases, temples }) {
       L.marker([c.lat, c.lng], { icon: caseIcon })
         .bindPopup(`
           <div style="font-family: 'Kanit';">
-            <strong style="font-size:1.1em;color:${colorClass}">[เคสผู้ป่วย] ${c.name}</strong><br/>
+            <strong style="font-size:1.1em;color:${markerColor}">[เคสผู้ป่วย] ${c.name}</strong><br/>
             <span><b>รายละเอียด:</b> ${c.desc}</span><br/>
             <span style="color:#64748b;font-size:0.9em"><b>สถานที่:</b> ${c.address}</span>
           </div>
@@ -222,12 +231,13 @@ function MapSidebar({ cases, temples }) {
 
         <div>
           <div style={{fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8', margin: '0.5rem', textTransform: 'uppercase'}}>รายชื่อเคสผู้ป่วย</div>
-          {sortedCases.map(c => {
-             let colorClass = c.statusClass === 'status-critical' ? '#e11d48' : 
-                              c.statusClass === 'status-warning' ? '#d97706' : '#2563eb';
+          {[...cases].sort((a,b)=> new Date(b.symptomDate) - new Date(a.symptomDate)).map((c) => {
+             // Find original index from chronological sort for color consistency
+             const chronoIndex = [...cases].sort((a,b)=> new Date(a.symptomDate) - new Date(b.symptomDate)).findIndex(cc => cc.id === c.id);
+             let markerColor = getCaseColor(c.id, chronoIndex);
              return (
                <div key={c.id} className="legend-item">
-                 <div className="legend-icon" style={{background: colorClass}}></div>
+                 <div className="legend-icon" style={{background: markerColor}}></div>
                  <div className="legend-info">
                    <span className="legend-name">{c.name}</span>
                    <span className="legend-desc">{c.status} | {c.address}</span>
@@ -289,7 +299,12 @@ function HomeDashboard({ cases }) {
               {[...cases].sort((a,b)=>new Date(b.symptomDate) - new Date(a.symptomDate)).map((c, idx) => (
                 <tr key={c.id}>
                   <td style={{color: '#64748b'}}>{idx + 1}</td>
-                  <td style={{fontWeight: 500, color: '#0f172a'}}>{c.name}</td>
+                  <td style={{fontWeight: 500, color: '#0f172a'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                      <div style={{width: '10px', height: '10px', borderRadius: '50%', background: getCaseColor(c.id, [...cases].sort((a,b)=> new Date(a.symptomDate) - new Date(b.symptomDate)).findIndex(cc => cc.id === c.id)), flexShrink: 0}}></div>
+                      {c.name}
+                    </div>
+                  </td>
                   <td>{formatThaiDate(c.symptomDate)}</td>
                   <td>{formatThaiDate(c.hospitalDate)}</td>
                   <td>
@@ -646,7 +661,12 @@ function DataManagement({ cases, setCases }) {
           <tbody>
             {[...cases].sort((a,b)=>new Date(b.symptomDate) - new Date(a.symptomDate)).map(c => (
               <tr key={c.id} style={{ background: editingId === c.id ? '#eef2ff' : 'transparent' }}>
-                <td>{c.name}</td>
+                <td>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                    <div style={{width: '10px', height: '10px', borderRadius: '50%', background: getCaseColor(c.id, [...cases].sort((a,b)=> new Date(a.symptomDate) - new Date(b.symptomDate)).findIndex(cc => cc.id === c.id)), flexShrink: 0}}></div>
+                    {c.name}
+                  </div>
+                </td>
                 <td>{formatThaiDate(c.symptomDate)}</td>
                 <td>{formatThaiDate(c.hospitalDate)}</td>
                 <td>{c.address}</td>
