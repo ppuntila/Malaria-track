@@ -350,6 +350,9 @@ body {
 
 .btn-primary { background: var(--primary); color: white; }
 .btn-success { background: var(--success); color: white; }
+.btn-edit { background: #6366f1; color: white; }
+.btn-delete { background: #e11d48; color: white; }
+.btn-secondary { background: #94a3b8; color: white; }
 .btn-outline { background: white; color: var(--primary); border: 1px solid var(--primary); }
 
 .form-grid {
