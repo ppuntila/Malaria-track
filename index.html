@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Malaria Outbreak Dashboard | Area B1</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ระบบป้องกันข้อผิดพลาดและเว็บล่ม (Error Boundary)
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) { return { hasError: true }; }
+  componentDidCatch(error, errorInfo) { console.error("System Error Prevented:", error, errorInfo); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{padding: '3rem', textAlign: 'center', background: '#fefce8', color: '#854d0e', border: '1px solid #eab308', margin: '2rem auto', maxWidth: '600px', borderRadius: '1rem', fontFamily: 'Kanit'}}>
+          <h2 style={{fontSize: '1.5rem', marginBottom: '1rem'}}>⚠️ ตรวจพบข้อผิดพลาด! แต่ระบบยังปลอดภัย</h2>
+          <p>เกิดปัญหาขัดข้องจากการประมวลผลข้อมูล (อาจเกิดจากการแก้ไข Excel ที่ผิดเพี้ยน)<br/>แต่ไม่ต้องตกใจ ข้อมูลเดิมของคุณยังคงอยู่ครบถ้วน</p>
+          <button style={{marginTop: '1.5rem', padding: '0.5rem 1rem', background: 'white', border: '1px solid currentColor', borderRadius: '0.5rem', cursor: 'pointer', fontFamily: 'Kanit'}} onClick={() => { localStorage.removeItem('malaria_cases'); window.location.reload(); }}>
+            คลิกเพื่อรีเซ็ตหน้าจอ (เคลียร์ข้อมูลที่มีปัญหา)
+          </button>
+        </div>
+      );
+    }
+    return this.props.children; 
+  }
+}
+
+// --- ระบบป้องกันข้อมูลพิกัดหาย (Coordinate Protection System) ---
+const mapCenter = [12.910, 102.255];
+
+const validateAndFixData = (data) => {
+  if (!Array.isArray(data)) return [];
+  return data.map(c => {
+    let lat = parseFloat(c.lat);
+    let lng = parseFloat(c.lng);
+    
+    // ตรวจสอบพิกัด: ถ้าว่าง, เป็น NaN, หรือเป็น 0 (ซึ่งมักจะผิดพลาด) ให้ใช้ค่ากลางของแผนที่
+    if (!lat || !lng || isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+      console.warn(`[System] Fixed missing coordinates for: ${c.name}`);
+      lat = mapCenter[0];
+      lng = mapCenter[1];
+    }
+    
+    return {
+      ...c,
+      lat: lat,
+      lng: lng,
+      statusClass: c.statusClass || (c.status === 'Admit' ? 'status-critical' : (c.status === 'พักรักษาตัว' ? 'status-warning' : 'status-active'))
+    };
+  });
+};
+
+const initialData = {
+  cases: [
+    {
+      id: 0,
+      name: "นายเสกสรรค์ สมุติรัมย์",
+      desc: "ป่วยจากระยองมากพักรักษาตัวที่บ้าน (เข้าพื้นที่ 18 มี.ค.69)",
+      symptomDate: "2026-03-18",
+      hospitalDate: "",
+      address: "67/2 ม.7 ต.ทับไทร",
+      status: "พักรักษาตัว",
+      statusClass: "status-warning",
+      lat: 12.905, lng: 102.245
+    },
+    {
+      id: 1,
+      name: "Mr. Than Tun OO",
+      desc: "Case 1 Malaria P.V. | บ้านอยู่ใกล้วัดป่าพงษ์เลิศ",
+      symptomDate: "2026-03-24",
+      hospitalDate: "2026-04-05",
+      address: "39/20 ม.1 ต.โป่งน้ำร้อน",
+      status: "พบเชื้อ",
+      statusClass: "status-active",
+      lat: 12.918, lng: 102.252
+    },
+    {
+      id: 2,
+      name: "นางคนึงนิต พุทธอุทัย",
+      desc: "Case 2 Malaria P.V. (อายุ 53 ปี) | บ้านอยู่ใกล้วัดป่าพงษ์เลิศ",
+      symptomDate: "2026-03-04",
+      hospitalDate: "2026-04-08",
+      address: "96/6 ม.1 ต.โป่งน้ำร้อน",
+      status: "พบเชื้อ",
+      statusClass: "status-active",
+      lat: 12.924, lng: 102.256
+    },
+    {
+      id: 3,
+      name: "นางยุพา วงศ์ดา",
+      desc: "Case 3 Malaria P.V. (อายุ 41 ปี) | ทำงานที่จันทร์วนา ตัดยางที่ 83/4 ม.7 ต.ทับไทร",
+      symptomDate: "2026-04-07",
+      hospitalDate: "2026-04-12",
+      address: "1/8 ม.1 ต.โป่งน้ำร้อน อ.โป่งน้ำร้อน จ.จันทบุรี",
+      status: "Admit",
+      statusClass: "status-critical",
+      lat: 12.901, lng: 102.251
+    }
+  ],
+  temples: [
+    { id: 't1', name: 'วัดป่าพงษ์เลิศ', lat: 12.922, lng: 102.254 },
+    { id: 't2', name: 'วัดป่าคิรีธรรม', lat: 12.895, lng: 102.261 }
+  ]
+};
+
+function formatThaiDate(isoString) {
+  if (!isoString) return "-";
+  return new Date(isoString).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function MapComponent({ cases, temples }) {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    if (mapInstance.current) {
+      mapInstance.current.remove();
+    }
+
+    const map = L.map(mapRef.current).setView(mapCenter, 13);
+    mapInstance.current = map;
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20
+    }).addTo(map);
+
+    temples.forEach(temple => {
+      const templeIcon = L.divIcon({
+        className: 'custom-marker',
+        html: `<div class="custom-marker-dot temple-marker-dot"></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      });
+
+      L.marker([temple.lat, temple.lng], { icon: templeIcon })
+        .bindPopup(`<b>${temple.name}</b><br/>จุดอ้างอิงพื้นที่เสี่ยง (ศูนย์กลาง)`)
+        .addTo(map);
+
+      L.circle([temple.lat, temple.lng], {
+        color: '#8b5cf6',
+        fillColor: '#8b5cf6',
+        fillOpacity: 0.1,
+        radius: 2000,
+        weight: 1,
+        dashArray: '5, 5'
+      }).addTo(map);
+    });
+
+    cases.forEach(c => {
+      let colorClass = c.statusClass === 'status-critical' ? '#e11d48' : 
+                       c.statusClass === 'status-warning' ? '#d97706' : '#2563eb';
+                       
+      const caseIcon = L.divIcon({
+        className: 'custom-marker',
+        html: `
+          <div class="custom-marker-ping" style="background-color: ${colorClass}"></div>
+          <div class="custom-marker-dot" style="background-color: ${colorClass}"></div>
+        `,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+
+      L.marker([c.lat, c.lng], { icon: caseIcon })
+        .bindPopup(`
+          <div style="font-family: 'Kanit';">
+            <strong style="font-size:1.1em;color:${colorClass}">[เคสผู้ป่วย] ${c.name}</strong><br/>
+            <span><b>รายละเอียด:</b> ${c.desc}</span><br/>
+            <span style="color:#64748b;font-size:0.9em"><b>สถานที่:</b> ${c.address}</span>
+          </div>
+        `)
+        .addTo(map);
+    });
+
+  }, [cases, temples]);
+
+  return <div id="map" style={{ borderRadius: 'inherit' }} ref={mapRef}></div>;
+}
+
+function MapSidebar({ cases, temples }) {
+  const sortedCases = [...cases].sort((a,b)=> new Date(b.symptomDate) - new Date(a.symptomDate));
+  return (
+    <div className="map-sidebar">
+      <div className="map-sidebar-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{marginRight: '0.5rem', verticalAlign: 'text-bottom'}}>
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
+        </svg>
+        จุดพิกัดในพื้นที่
+      </div>
+      <div className="map-sidebar-list">
+        <div style={{marginBottom: '1rem'}}>
+          <div style={{fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8', margin: '0.5rem', textTransform: 'uppercase'}}>พื้นที่อ้างอิงเสี่ยง</div>
+          {temples.map(t => (
+            <div key={t.id} className="legend-item">
+              <div className="legend-icon" style={{background: '#8b5cf6'}}></div>
+              <div className="legend-info">
+                <span className="legend-name">{t.name}</span>
+                <span className="legend-desc">ศูนย์กลางรัศมี 2 กม.</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <div style={{fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8', margin: '0.5rem', textTransform: 'uppercase'}}>รายชื่อเคสผู้ป่วย</div>
+          {sortedCases.map(c => {
+             let colorClass = c.statusClass === 'status-critical' ? '#e11d48' : 
+                              c.statusClass === 'status-warning' ? '#d97706' : '#2563eb';
+             return (
+               <div key={c.id} className="legend-item">
+                 <div className="legend-icon" style={{background: colorClass}}></div>
+                 <div className="legend-info">
+                   <span className="legend-name">{c.name}</span>
+                   <span className="legend-desc">{c.status} | {c.address}</span>
+                 </div>
+               </div>
+             )
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HomeDashboard({ cases }) {
+  const total = cases.length;
+  const activeAndWarning = cases.filter(c => c.statusClass === 'status-active' || c.statusClass === 'status-warning').length;
+  const critical = cases.filter(c => c.statusClass === 'status-critical').length;
+
+  return (
+    <div className="home-layout">
+      {/* 3 Top Cards based on sketch */}
+      <div className="home-summary-grid">
+        <div className="home-summary-card">
+          <h3>จำนวนผู้ป่วยทั้งหมด</h3>
+          <div className="value">{total}</div>
+        </div>
+        <div className="home-summary-card active-card">
+          <h3>พักรักษาตัว / พบเชื้อ</h3>
+          <div className="value">{activeAndWarning}</div>
+        </div>
+        <div className="home-summary-card critical-card">
+          <h3>วิกฤต</h3>
+          <div className="value">{critical}</div>
+        </div>
+      </div>
+
+      {/* Table based on sketch */}
+      <div style={{display: 'flex', flexDirection: 'column', flex: 1}}>
+        <div className="panel-header" style={{ marginBottom: '1rem', border: 'none', paddingBottom: 0 }}>
+          <h2 style={{fontSize: '1.25rem', fontWeight: 600}}>ตารางเคสผู้ป่วย</h2>
+          <button className="btn btn-outline btn-print-hide" onClick={() => window.print()}>
+             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+             ส่งออก PDF / พิมพ์
+          </button>
+        </div>
+        
+        <div className="table-container">
+          <table className="dashboard-table">
+            <thead>
+              <tr>
+                <th>ลำดับ</th>
+                <th>ชื่อ-นามสกุล</th>
+                <th>วันเริ่มป่วย</th>
+                <th>วันมารพ.</th>
+                <th>สถานะ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cases.sort((a,b)=>new Date(b.symptomDate) - new Date(a.symptomDate)).map((c, idx) => (
+                <tr key={c.id}>
+                  <td style={{color: '#64748b'}}>{idx + 1}</td>
+                  <td style={{fontWeight: 500, color: '#0f172a'}}>{c.name}</td>
+                  <td>{formatThaiDate(c.symptomDate)}</td>
+                  <td>{formatThaiDate(c.hospitalDate)}</td>
+                  <td>
+                    {/* Status Pill matching sketch */}
+                    <span className={`status-pill ${c.statusClass.replace('status-', '')}-status`}>
+                      {c.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {cases.length === 0 && (
+                <tr><td colSpan="5" style={{ textAlign: 'center', padding: '2rem' }}>ยังไม่มีข้อมูลผู้ป่วย</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Timeline({ cases, activeCase, setActiveCase }) {
+  const sortedCases = [...cases].sort((a, b) => new Date(a.symptomDate) - new Date(b.symptomDate));
+  return (
+    <div className="timeline-container" style={{overflow: 'visible'}}>
+      <div style={{display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem'}}>
+        <button className="btn btn-outline btn-print-hide" onClick={() => window.print()}>
+           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+           ส่งออก PDF / พิมพ์
+        </button>
+      </div>
+
+      {sortedCases.map((c) => (
+        <div 
+          key={c.id} 
+          className={`timeline-item ${activeCase === c.id ? 'active' : ''}`}
+          onMouseEnter={() => setActiveCase && setActiveCase(c.id)}
+          onMouseLeave={() => setActiveCase && setActiveCase(null)}
+        >
+          <div className="timeline-dot"></div>
+          <div className="case-card">
+            {/* Phase 4: Prominent Date Header */}
+            <div className="timeline-date-header">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              {formatThaiDate(c.symptomDate)}
+            </div>
+            
+            <div className="case-name">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{color: '#64748b'}}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              {c.name}
+              <span className={`status-pill ${c.statusClass.replace('status-', '')}-status`} style={{marginLeft: 'auto', fontSize: '0.75rem'}}>
+                {c.status}
+              </span>
+            </div>
+
+            {c.hospitalDate && (
+               <div className="case-detail">
+                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                 นำส่งโรงพยาบาลรักษาวันที่: {formatThaiDate(c.hospitalDate)}
+               </div>
+            )}
+            <div className="case-detail">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+              {c.address}
+            </div>
+            {c.desc && (
+              <div className="case-detail" style={{color: '#334155'}}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                {c.desc}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LocationPicker({ lat, lng, onChange }) {
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const markerInstance = useRef(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    
+    if (mapInstance.current) {
+      mapInstance.current.remove();
+    }
+
+    const initLat = lat || mapCenter[0];
+    const initLng = lng || mapCenter[1];
+
+    const map = L.map(mapRef.current).setView([initLat, initLng], 14);
+    mapInstance.current = map;
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20
+    }).addTo(map);
+
+    markerInstance.current = L.marker([initLat, initLng], { draggable: true }).addTo(map);
+
+    markerInstance.current.on('dragend', function (event) {
+      const position = markerInstance.current.getLatLng();
+      onChange(position.lat, position.lng);
+    });
+
+    map.on('click', function(e) {
+      markerInstance.current.setLatLng(e.latlng);
+      onChange(e.latlng.lat, e.latlng.lng);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (markerInstance.current && (lat === 0 || lat === mapCenter[0])) {
+      markerInstance.current.setLatLng([lat || mapCenter[0], lng || mapCenter[1]]);
+      mapInstance.current.setView([lat || mapCenter[0], lng || mapCenter[1]]);
+    }
+  }, [lat, lng]);
+
+  return (
+    <div className="map-picker-container">
+      <div className="map-picker-hint">
+        <svg fill="currentColor" width="16" height="16" viewBox="0 0 16 16"><path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
+        คลิกหรือลากหมุดบนแผนที่เพื่อระบุตำแหน่งหลังคาบ้านที่แม่นยำ
+      </div>
+      <div style={{height: '100%', width: '100%'}} ref={mapRef}></div>
+    </div>
+  );
+}
+
+function DataManagement({ cases, setCases }) {
+  const fileInputRef = useRef(null);
+  
+  const [formData, setFormData] = useState({
+    name: '', desc: '', symptomDate: '', hospitalDate: '', address: '', status: 'พบเชื้อ', lat: mapCenter[0], lng: mapCenter[1]
+  });
+
+  const handleExport = () => {
+    const exportData = cases.map(c => ({
+      ID: c.id,
+      Name: c.name,
+      Description: c.desc,
+      SymptomDate: c.symptomDate,
+      HospitalDate: c.hospitalDate,
+      Address: c.address,
+      Status: c.status,
+      StatusClass: c.statusClass,
+      Lat: c.lat,
+      Lng: c.lng
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Cases");
+    XLSX.writeFile(workbook, "malaria_cases.xlsx");
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws);
+      
+      const importedCases = data.map(row => ({
+        id: row.ID || Date.now() + Math.floor(Math.random()*1000),
+        name: row.Name || "ไม่ระบุชื่อ",
+        desc: row.Description || "",
+        symptomDate: row.SymptomDate || row.Date || "",
+        hospitalDate: row.HospitalDate || "",
+        address: row.Address || "",
+        status: row.Status || "พบเชื้อ",
+        statusClass: row.StatusClass || "status-active",
+        lat: parseFloat(row.Lat) || mapCenter[0],
+        lng: parseFloat(row.Lng) || mapCenter[1]
+      }));
+      
+      const validatedData = validateAndFixData(importedCases);
+      setCases(validatedData);
+      alert("นำเข้าข้อมูลสำเร็จแล้ว!");
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = null;
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const newCase = {
+      id: Date.now(),
+      name: formData.name,
+      desc: formData.desc,
+      symptomDate: formData.symptomDate,
+      hospitalDate: formData.hospitalDate,
+      address: formData.address,
+      status: formData.status,
+      statusClass: formData.status === 'Admit' ? 'status-critical' : (formData.status === 'พักรักษาตัว' ? 'status-warning' : 'status-active'),
+      lat: formData.lat,
+      lng: formData.lng
+    };
+    setCases(prev => [...prev, newCase]);
+    alert("เพิ่มข้อมูลผู้ป่วยใหม่สำเร็จ!");
+    setFormData({ name: '', desc: '', symptomDate: '', hospitalDate: '', address: '', status: 'พบเชื้อ', lat: mapCenter[0], lng: mapCenter[1] });
+  };
+
+  return (
+    <div className="management-layout">
+      <div className="panel-card" style={{ flex: 'none' }}>
+        <div className="management-header" style={{ marginBottom: '1.5rem' }}>
+          <h2 className="panel-header" style={{ marginBottom: 0, border: 'none', padding: 0 }}>
+            บริหารจัดการข้อมูลผู้ป่วย (Excel)
+          </h2>
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".xlsx, .xls, .csv" onChange={handleImport} />
+            <button type="button" className="btn" style={{ background: '#64748b', color: 'white' }} onClick={() => fileInputRef.current.click()}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              อัปโหลดไฟล์ (Import)
+            </button>
+            <button type="button" className="btn btn-success" onClick={handleExport}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              ดาวน์โหลดเป็น Excel
+            </button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ background: '#f8fafc', padding: '1rem', borderRadius: '0.5rem', border: '1px solid #e2e8f0', marginBottom: '1rem' }}>
+          <h3 style={{ marginBottom: '1rem', fontSize: '1.1rem', color: '#0f172a' }}>ฟอร์มเพิ่มข้อมูลใหม่</h3>
+          <div className="form-grid">
+            <div className="form-group">
+              <label>ชื่อ-นามสกุล</label>
+              <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="นาย ก." />
+            </div>
+            <div className="form-group">
+              <label>วันที่เริ่มป่วย</label>
+              <input required type="date" value={formData.symptomDate} onChange={e => setFormData({...formData, symptomDate: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>วันที่มาโรงพยาบาล</label>
+              <input type="date" value={formData.hospitalDate} onChange={e => setFormData({...formData, hospitalDate: e.target.value})} />
+            </div>
+            <div className="form-group">
+              <label>สถานะ</label>
+              <select value={formData.status} onChange={e => setFormData({...formData, status: e.target.value})}>
+                <option value="พบเชื้อ">พบเชื้อ (Active)</option>
+                <option value="พักรักษาตัว">พักรักษาตัว (Warning)</option>
+                <option value="Admit">Admit (Critical)</option>
+              </select>
+            </div>
+            <div className="form-group" style={{gridColumn: 'span 2'}}>
+              <label>สถานที่ / ที่อยู่ (เช่น หมู่บ้าน ถนน ตำบล อำเภอ)</label>
+              <input required type="text" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} placeholder="ม.7 ต.ทับไทร อ.โป่งน้ำร้อน" />
+            </div>
+            <div className="form-group" style={{gridColumn: 'span 2', marginBottom: '1rem' }}>
+              <label>รายละเอียดเพิ่มเติม</label>
+              <input type="text" value={formData.desc} onChange={e => setFormData({...formData, desc: e.target.value})} placeholder="อาการ หรือ ประวัติการเดินทาง" />
+            </div>
+          </div>
+          
+          <LocationPicker 
+             lat={formData.lat} 
+             lng={formData.lng} 
+             onChange={(lat, lng) => setFormData(prev => ({...prev, lat, lng}))} 
+          />
+
+          <button type="submit" className="btn btn-primary" style={{ width: 'fit-content' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            เพิ่มเคสเข้าระบบ
+          </button>
+        </form>
+      </div>
+
+      <div className="table-container">
+        <table className="dashboard-table">
+          <thead>
+            <tr>
+              <th>ชื่อ-นามสกุล</th>
+              <th>วันที่เริ่มป่วย</th>
+              <th>วันที่มา รพ.</th>
+              <th>สถานที่</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cases.sort((a,b)=>new Date(b.symptomDate) - new Date(a.symptomDate)).map(c => (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td>{formatThaiDate(c.symptomDate)}</td>
+                <td>{formatThaiDate(c.hospitalDate)}</td>
+                <td>{c.address}</td>
+                <td><span className={`status-pill ${c.statusClass.replace('status-', '')}-status`}>{c.status}</span></td>
+              </tr>
+            ))}
+            {cases.length === 0 && (
+              <tr><td colSpan="5" style={{ textAlign: 'center', padding: '2rem' }}>ยังไม่มีข้อมูลในระบบ</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  
+  // ระบบ Auto-Save: โหลดข้อมูลจากเครื่องคอมพิวเตอร์ก่อนเสมอ
+  const [cases, setCases] = useState(() => {
+    const saved = localStorage.getItem('malaria_cases');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return validateAndFixData(parsed);
+      } catch (e) {
+        console.error("Local Storage parsing error, checking backup...");
+        const backup = localStorage.getItem('malaria_cases_backup');
+        if (backup) {
+          try { return validateAndFixData(JSON.parse(backup)); } catch(err) {}
+        }
+      }
+    }
+    return validateAndFixData(initialData.cases);
+  });
+
+  // ระบบ Auto-Save: เซฟข้อมูลลงเครื่องคอมพิวเตอร์ออโต้เมื่อมีการเปลี่ยนแปลงเคส
+  useEffect(() => {
+    if (cases && cases.length > 0) {
+      localStorage.setItem('malaria_cases', JSON.stringify(cases));
+      // สร้าง Backup ไว้เสมอเพื่อป้องกันกรณีข้อมูลหลักเสียหาย
+      localStorage.setItem('malaria_cases_backup', JSON.stringify(cases));
+    }
+  }, [cases]);
+
+  const stats = {
+    total: cases.length,
+    critical: cases.filter(c => c.statusClass === 'status-critical').length,
+    area: "พื้นที่ B1 | เริ่มเกิดเหตุ 25 ม.ค. 68 | รับแจ้ง 3 ก.พ. 68"
+  };
+
+  return (
+    <div className="dashboard-container">
+      <header className="header btn-print-hide" style={{flexDirection: 'column', alignItems: 'stretch', gap: '1rem'}}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+          <h1>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+            ระบบติดตามสถานการณ์โรคไข้มาลาเรีย
+          </h1>
+          <div className="header-stats">
+            <div className="stat-badge">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
+              </svg>
+              ผู้ป่วยสะสม: {stats.total} ราย
+            </div>
+            {stats.critical > 0 && (
+              <div className="stat-badge" style={{background: 'rgba(225, 29, 72, 0.1)', borderColor: 'rgba(225, 29, 72, 0.2)', color: '#be123c'}}>
+                วิกฤต/Admit: {stats.critical} ราย
+              </div>
+            )}
+            <div className="stat-badge area">
+               {stats.area}
+            </div>
+          </div>
+        </div>
+        
+        <div className="tabs-nav">
+          <button className={`tab-button ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+            Dashboard ภาพรวม
+          </button>
+          <button className={`tab-button ${activeTab === 'timeline' ? 'active' : ''}`} onClick={() => setActiveTab('timeline')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            ไทม์ไลน์
+          </button>
+          <button className={`tab-button ${activeTab === 'map' ? 'active' : ''}`} onClick={() => setActiveTab('map')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+            แผนที่
+          </button>
+          <button className={`tab-button ${activeTab === 'data' ? 'active' : ''}`} onClick={() => setActiveTab('data')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            จัดการข้อมูล/Excel
+          </button>
+        </div>
+      </header>
+
+      <main className="main-content">
+        {activeTab === 'dashboard' && (
+          <HomeDashboard cases={cases} />
+        )}
+
+        {activeTab === 'timeline' && (
+          <div className="timeline-page-container">
+            <div className="timeline-wrapper">
+              <Timeline cases={cases} activeCase={null} setActiveCase={null} />
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'map' && (
+          <div className="map-layout">
+            <MapSidebar cases={cases} temples={initialData.temples} />
+            <section className="panel-card" style={{padding: '0.5rem'}}>
+               <div className="map-wrapper">
+                   <MapComponent cases={cases} temples={initialData.temples} />
+               </div>
+            </section>
+          </div>
+        )}
+
+        {activeTab === 'data' && (
+          <DataManagement cases={cases} setCases={setCases} />
+        )}
+      </main>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
+    </script>
+</body>
+</html>

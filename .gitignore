@@ -1,0 +1,10 @@
+# System Files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Large Assets (Optional)
+# Malaria_Dashboard_System.zip
+
+# Logs
+*.log
