@@ -275,7 +275,7 @@ function HomeDashboard({ cases }) {
           <div className="value">{activeAndWarning}</div>
         </div>
         <div className="home-summary-card critical-card">
-          <h3>วิกฤต</h3>
+          <h3>Admit</h3>
           <div className="value">{critical}</div>
         </div>
       </div>
@@ -903,7 +903,7 @@ function App() {
             </div>
             {stats.critical > 0 && (
               <div className="stat-badge" style={{background: 'rgba(225, 29, 72, 0.1)', borderColor: 'rgba(225, 29, 72, 0.2)', color: '#be123c'}}>
-                วิกฤต/Admit: {stats.critical} ราย
+                Admit: {stats.critical} ราย
               </div>
             )}
             <div className="stat-badge area">
